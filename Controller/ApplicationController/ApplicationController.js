@@ -96,6 +96,51 @@ const applyJobs = async (req, res) => {
   }
 };
 
+const getUserAppliedJobs = async (req, res) => {
+  const userId = req.decodedToken.user_id;
+
+  try {
+    // Step 1: Get applications for the user
+    const applications = await Application.findAll({
+      where: { user_id: userId },
+      order: [['applied_at', 'DESC']]
+    });
+
+    // Step 2: Extract job IDs
+    const jobIds = applications.map(app => app.job_id);
+
+    // Step 3: Get job details
+    const jobs = await Job.findAll({
+      where: { id: jobIds }
+    });
+
+    // Step 4: Merge jobs with applications manually
+    const result = applications.map(app => {
+      const job = jobs.find(j => j.id === app.job_id);
+      return {
+        application_id: app.id,
+        job_id: app.job_id,
+        cv: app.cv,
+        cover_letter: app.cover_letter,
+        status: app.status,
+        applied_at: app.applied_at,
+        job: job || null
+      };
+    });
+
+    return res.status(200).json({
+      count: applications.length,
+      applications: result
+    });
+
+  } catch (error) {
+    console.error("Error fetching user applications:", error.message);
+    return res.status(500).json({ message: "Failed to fetch user applications", error });
+  }
+};
+
+
 module.exports = {
   applyJobs,
+  getUserAppliedJobs
 };
