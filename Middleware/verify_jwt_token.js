@@ -1,112 +1,75 @@
-const express = require("express");
-const router = express.Router();
-const db = require("../Model/index.js");
+// File: Middleware/verify_jwt_token.js
 const jwt = require("jsonwebtoken");
-// const { User } = require("../Models");
-require("dotenv");
+const db = require("../Model/index.js");
 
-const User = db.User;
-router.use(async (req, res, next) => {
+const User = db.user;
+
+function extractToken(req) {
+  // 1) Authorization: Bearer xxx
+  const auth = req.headers.authorization || req.headers.Authorization;
+  if (auth && typeof auth === "string") {
+    const parts = auth.split(" ");
+    if (parts.length === 2 && parts[0].toLowerCase() === "bearer") {
+      return parts[1];
+    }
+  }
+
+  // 2) token header (your old way)
+  if (req.headers.token) return req.headers.token;
+
+  // 3) x-access-token (common)
+  if (req.headers["x-access-token"]) return req.headers["x-access-token"];
+
+  return null;
+}
+
+module.exports = async (req, res, next) => {
   try {
-    const token = req.headers.token;
+    const token = extractToken(req);
     if (!token) {
-      return res.status(400).json({
-        status: 400,
-        message: "JWT token not provided.",
+      return res.status(401).json({
+        status: 401,
+        message: "JWT token not provided. Use Authorization: Bearer <token>",
       });
     }
-    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-    if (!decodedToken) {
-      return res.status(403).json({ status: 403, message: "Invalid JWT token" });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // extra expiration check (jwt.verify already checks exp if present)
+    if (decoded?.exp && decoded.exp <= Date.now() / 1000) {
+      return res.status(401).json({ status: 401, message: "JWT token has expired" });
     }
 
-    // Check token expiration
-    if (decodedToken.exp <= Date.now() / 1000) {
-      return res.status(403).json({ status: 403, message: "JWT token has expired" });
-    }
-    // Find the user by ID and email
+    // Find user in DB
     const user = await User.findOne({
-      where: {
-        id: decodedToken.user_id,
-        email: decodedToken.email
-      }
+      where: { id: decoded.user_id, email: decoded.email },
+      attributes: ["id", "email", "role", "status"],
     });
+
     if (!user) {
       return res.status(403).json({ status: 403, message: "User does not exist" });
     }
-    req.decodedToken = decodedToken;
+
+    if (user.status && user.status !== "ACTIVE") {
+      return res.status(403).json({ status: 403, message: "Account is not active" });
+    }
+
+    // ✅ Controllers will use this
+    req.user = {
+      user_id: user.id,
+      email: user.email,
+      role: user.role || "USER",
+    };
+
+    // optional: keep decoded also
+    req.decodedToken = decoded;
+
     next();
   } catch (error) {
     console.error("Error in authentication middleware:", error);
-    return res.status(403).json({ status: 403, message: "Invalid JWT token. Or session expired" });
+    return res.status(401).json({
+      status: 401,
+      message: "Invalid JWT token or session expired",
+    });
   }
-});
-module.exports = router;
-
-
-
-
-
-
-
-
-
-
-
-// const express = require("express");
-// const router = express.Router();
-// const db = require("../Models");
-// const jwt = require("jsonwebtoken");
-// require("dotenv").config(); // ✅ Make sure to load env vars
-
-// const User = db.users;
-
-// // ✅ JWT middleware to protect routes
-// router.use(async (req, res, next) => {
-//   try {
-//     const token = req.headers.token;
-
-//     if (!token) {
-//       return res.status(400).json({
-//         status: 400,
-//         message: "JWT token not provided.",
-//       });
-//     }
-
-//     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-
-//     // Check expiration
-//     if (decodedToken.exp <= Date.now() / 1000) {
-//       return res.status(403).json({
-//         status: 403,
-//         message: "JWT token has expired",
-//       });
-//     }
-
-//     // Find the user from token
-//     const user = await User.findOne({
-//       where: {
-//         id: decodedToken.user_id,
-//         email: decodedToken.email
-//       }
-//     });
-
-//     if (!user) {
-//       return res.status(403).json({
-//         status: 403,
-//         message: "User does not exist",
-//       });
-//     }
-
-//     req.decodedToken = decodedToken; // Attach to request
-//     next(); // Continue
-//   } catch (error) {
-//     console.error("Error in authentication middleware:", error);
-//     return res.status(403).json({
-//       status: 403,
-//       message: "Invalid JWT token or session expired.",
-//     });
-//   }
-// });
-
-// module.exports = router;
+};
