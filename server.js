@@ -9,6 +9,8 @@ const db = require("./Model/index.js");
 const app = express();
 const server = http.createServer(app);
 
+require('dotenv').config();
+
 // ✅ Body parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

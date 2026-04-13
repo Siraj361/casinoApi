@@ -1,9 +1,7 @@
 module.exports = {
-    
-
-    HOST: process.env.HOST || 'localhost', 
-    USER: process.env.USER || 'root',
-    //  PASSWORD: process.env.PASSWORD || 'password',
-    DB: process.env.DB || 'casino',
+    HOST: process.env.DB_HOST || '127.0.0.1', 
+    USER: process.env.DB_USER || 'casino_user', // USER ko DB_USER kar diya
+    PASSWORD: process.env.DB_PASSWORD || 'MyPassword123',
+    DB: process.env.DB_NAME || 'casino',
     dialect: 'mysql',
-}; 
+};
