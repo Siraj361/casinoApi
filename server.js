@@ -20,7 +20,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // ✅ CORS (ONLY ONCE)
 app.use(
   cors({
-    origin: ["http://localhost:5173"], // exact frontend origin
+   origin: ["https://gumble.live", "http://gumble.live"], // exact frontend origin
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
