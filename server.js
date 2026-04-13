@@ -85,7 +85,7 @@ app.use("/api/password-reset", passwordResetRoute);
 app.use("/api/languages", languageRoute);
 app.use("/api/deposit-requests" ,depositRequestRoute)
 
-app.get("/", (req, res) => {
+app.get("/api", (req, res) => {
   res.status(200).json({ status: 200, message: "API's are working" });
 });
 
