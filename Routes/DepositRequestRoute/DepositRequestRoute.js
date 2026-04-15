@@ -8,6 +8,6 @@ const { uploadWalletImage } = require("../../Includes/multer.js");
 // ✅ Multer (uploadWalletImage) ko VerifyJWT ke baad aur Controller se pehle hona chahiye
 router.post("/create", VerifyJWTtoken, uploadWalletImage, DepositRequestController.createDepositRequest);
 router.put("/approve/:requestId", VerifyJWTtoken, IsAdmin, DepositRequestController.approveDepositRequest);
-router.get("/getAllPayments", VerifyJWTtoken, IsAdmin, DepositRequestController.getAllPayments);
+router.get("/getAllPayments", VerifyJWTtoken, DepositRequestController.getAllPayments);
 
 module.exports = router;

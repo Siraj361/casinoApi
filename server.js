@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
+const socketIO = require("socket.io");
 require("dotenv").config();
 const path = require("path");
 
@@ -8,6 +9,16 @@ const db = require("./Model/index.js");
 
 const app = express();
 const server = http.createServer(app);
+
+// ✅ Socket.io Setup
+const io = socketIO(server, {
+  cors: {
+    origin: ["http://localhost:5173", "http://localhost:3000"],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  },
+  transports: ["websocket", "polling"],
+});
 
 require('dotenv').config();
 
@@ -19,10 +30,18 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 
 
-// ✅ CORS (ONLY ONCE)
+// app.use(
+//   cors({
+//   //  origin: ["https://gumble.live", "http://gumble.live"],
+//     origin: ["http://localhost:3000"],
+//     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+//     allowedHeaders: ["Content-Type", "Authorization"],
+//   })
+// );
+
 app.use(
   cors({
-   origin: ["https://gumble.live", "http://gumble.live"], // exact frontend origin
+  origin: ["http://localhost:5173", "http://localhost:3000"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -91,9 +110,46 @@ app.get("/api", (req, res) => {
   res.status(200).json({ status: 200, message: "API's are working" });
 });
 
+// ✅ Socket.io Connection Handler
+io.on("connection", (socket) => {
+  console.log(`🟢 User connected: ${socket.id}`);
+
+  // Join game room
+  socket.on("join_game", (data) => {
+    const { gameCode, userId } = data;
+    socket.join(`game:${gameCode}`);
+    // Store user ID in socket for authorization
+    socket.userId = userId;
+    socket.join(`user:${userId}`);
+    console.log(`✅ User ${userId} joined game: ${gameCode}`);
+  });
+
+  // Leave game room
+  socket.on("leave_game", (data) => {
+    const { gameCode, userId } = data;
+    socket.leave(`game:${gameCode}`);
+    console.log(`User ${userId} left game: ${gameCode}`);
+  });
+
+  // Heartbeat to keep connection alive
+  socket.on("ping", (callback) => {
+    callback("pong");
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`🔴 User disconnected: ${socket.id}`);
+  });
+});
+
+// Make io accessible to routes
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-module.exports = { server };
+module.exports = { server, io };

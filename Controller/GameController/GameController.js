@@ -252,6 +252,47 @@ async function createLedgerEntry({
   );
 }
 
+async function recordPlatformProfit({
+  transaction,
+  userId,
+  gameId,
+  betId,
+  currencyNetworkId,
+  commissionType = "bet_loss",
+  betAmountAtomic,
+  payoutAtomic = 0n,
+  commissionAtomic,
+  commissionRateBps = 100,
+  betAmountDisplay,
+  payoutDisplay,
+  commissionDisplay,
+  metadata = {},
+}) {
+  if (!db.platformProfit) return null;
+
+  return db.platformProfit.create(
+    {
+      bet_id: betId,
+      user_id: userId,
+      game_id: gameId,
+      currency_network_id: currencyNetworkId,
+      commission_type: commissionType,
+      bet_amount_atomic: String(betAmountAtomic ?? 0),
+      payout_atomic: String(payoutAtomic ?? 0),
+      commission_atomic: String(commissionAtomic ?? 0),
+      bet_amount: betAmountDisplay,
+      payout: payoutDisplay,
+      commission: commissionDisplay,
+      commission_rate_bps: commissionRateBps,
+      status: "recorded",
+      metadata_json: JSON.stringify(metadata),
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
+    { transaction }
+  );
+}
+
 const listGames = async (req, res) => {
   try {
     const onlyActive = (req.query.active || "true").toLowerCase() === "true";
@@ -364,9 +405,15 @@ const playDice = async (req, res) => {
       : 0;
     const payoutAtomic = won ? BigInt(amountToAtomic(payoutDisplay, decimals)) : 0n;
 
+    // ✅ Calculate 1% commission on loss
+    const commissionRateBps = 100; // 1%
+    const commissionAtomic = won ? 0n : (betAmountAtomic * BigInt(commissionRateBps)) / 100n;
+    const commissionDisplay = atomicToDisplay(commissionAtomic.toString(), decimals);
+
+    // Deduct commission from platform (already included in balance calculation)
     const newBalanceAtomic = won
       ? currentBalanceAtomic - betAmountAtomic + payoutAtomic
-      : currentBalanceAtomic - betAmountAtomic;
+      : currentBalanceAtomic - betAmountAtomic - commissionAtomic;
 
     setWalletBalance(wallet, newBalanceAtomic, decimals);
     wallet.updated_at = new Date();
@@ -410,6 +457,31 @@ const playDice = async (req, res) => {
       metadata: { roll, chance, mode, payoutMultiplier },
     });
 
+    const betRecord = await Bet.findOne(
+      { where: { round_id: round.id } },
+      { transaction: t }
+    );
+
+    // ✅ Record platform profit/commission
+    if (!won && commissionAtomic > 0n) {
+      await recordPlatformProfit({
+        transaction: t,
+        userId,
+        gameId: game.id,
+        betId: betRecord?.id,
+        currencyNetworkId: currency_network_id,
+        commissionType: "bet_loss",
+        betAmountAtomic,
+        payoutAtomic: 0n,
+        commissionAtomic,
+        commissionRateBps,
+        betAmountDisplay: normalizeDisplayAmount(betAmount, decimals),
+        payoutDisplay: 0,
+        commissionDisplay,
+        metadata: { gameType: "DICE", mode, chance, roll, reason: "loss_commission" },
+      });
+    }
+
     await createLedgerEntry({
       transaction: t,
       userId,
@@ -437,6 +509,30 @@ const playDice = async (req, res) => {
     }
 
     await t.commit();
+
+    // ✅ Emit Socket.io events
+    if (req.io) {
+      req.io.to(`game:DICE`).emit("dice_result", {
+        userId,
+        roundId: round.id,
+        betAmount: normalizeDisplayAmount(betAmount, decimals),
+        roll,
+        chance,
+        mode,
+        won,
+        payout: payoutDisplay,
+        balanceBefore: atomicToDisplay(currentBalanceAtomic.toString(), decimals),
+        balanceAfter: atomicToDisplay(newBalanceAtomic.toString(), decimals),
+        commission: commissionDisplay,
+        timestamp: new Date(),
+      });
+
+      // Personal update
+      req.io.to(`user:${userId}`).emit("balance_updated", {
+        newBalance: atomicToDisplay(newBalanceAtomic.toString(), decimals),
+        change: won ? Number(payoutDisplay) - Number(betAmount) : -Number(betAmount) - Number(commissionDisplay),
+      });
+    }
 
     return res.status(200).json({
       message: "Dice played successfully",
@@ -654,12 +750,23 @@ const revealMinesTile = async (req, res) => {
       state.exploded = true;
       state.hitTile = tileIndex;
 
+      // ✅ Calculate 1% commission on loss (mine hit)
+      const betAmountAtomic = BigInt(amountToAtomic(state.betAmount, decimals));
+      const commissionRateBps = 100; // 1%
+      const commissionAtomic = (betAmountAtomic * BigInt(commissionRateBps)) / 100n;
+      const commissionDisplay = atomicToDisplay(commissionAtomic.toString(), decimals);
+
       round.status = "completed";
       round.ended_at = new Date();
       round.result_json = JSON.stringify(state);
       await round.save({ transaction: t });
 
       if (Bet) {
+        const betRecord = await Bet.findOne(
+          { where: { round_id: round.id } },
+          { transaction: t }
+        );
+
         await Bet.update(
           {
             status: "lost",
@@ -670,9 +777,48 @@ const revealMinesTile = async (req, res) => {
           },
           { where: { round_id: round.id }, transaction: t }
         );
+
+        // ✅ Record platform profit for loss
+        if (commissionAtomic > 0n) {
+          await recordPlatformProfit({
+            transaction: t,
+            userId,
+            gameId: round.game_id,
+            betId: betRecord?.id,
+            currencyNetworkId: state.currency_network_id,
+            commissionType: "bet_loss",
+            betAmountAtomic,
+            payoutAtomic: 0n,
+            commissionAtomic,
+            commissionRateBps,
+            betAmountDisplay: state.betAmount,
+            payoutDisplay: 0,
+            commissionDisplay,
+            metadata: { gameType: "MINES", minesCount: state.minesCount, hitTile: tileIndex, reason: "mine_hit_commission" },
+          });
+        }
       }
 
       await t.commit();
+
+      // ✅ Emit Socket.io events
+      if (req.io) {
+        req.io.to(`game:MINES`).emit("mines_result", {
+          userId,
+          roundId: round.id,
+          betAmount: state.betAmount,
+          hitTile: tileIndex,
+          mineIndexes: state.mineIndexes,
+          revealed: state.revealed,
+          won: false,
+          commission: commissionDisplay,
+          timestamp: new Date(),
+        });
+
+        req.io.to(`user:${userId}`).emit("balance_updated", {
+          change: -Number(state.betAmount) - Number(commissionDisplay),
+        });
+      }
 
       return res.status(200).json({
         message: "Mine hit",
@@ -684,6 +830,7 @@ const revealMinesTile = async (req, res) => {
           revealed: state.revealed,
           mineIndexes: state.mineIndexes,
           currentMultiplier: getMinesMultiplier(state.revealed.length, state.minesCount),
+          commission: commissionDisplay,
         },
       });
     }
@@ -825,6 +972,26 @@ const cashoutMines = async (req, res) => {
     });
 
     await t.commit();
+
+    // ✅ Emit Socket.io events
+    if (req.io) {
+      req.io.to(`game:MINES`).emit("mines_result", {
+        userId,
+        roundId: round.id,
+        betAmount: state.betAmount,
+        revealed: state.revealed,
+        mineIndexes: state.mineIndexes,
+        won: true,
+        payout: payoutDisplay,
+        multiplier: currentMultiplier,
+        timestamp: new Date(),
+      });
+
+      req.io.to(`user:${userId}`).emit("balance_updated", {
+        newBalance: atomicToDisplay(newBalanceAtomic.toString(), decimals),
+        change: Number(payoutDisplay) - Number(state.betAmount),
+      });
+    }
 
     return res.status(200).json({
       message: "Mines cashed out",
@@ -1069,6 +1236,12 @@ const cashoutCrash = async (req, res) => {
     const crashPoint = Number(state.crashPoint);
 
     if (liveMultiplier >= crashPoint) {
+      // ✅ Calculate 1% commission on loss (crash busted)
+      const betAmountAtomic = BigInt(amountToAtomic(state.betAmount, decimals));
+      const commissionRateBps = 100; // 1%
+      const commissionAtomic = (betAmountAtomic * BigInt(commissionRateBps)) / 100n;
+      const commissionDisplay = atomicToDisplay(commissionAtomic.toString(), decimals);
+
       round.status = "completed";
       round.ended_at = new Date();
       round.result_json = JSON.stringify({
@@ -1081,6 +1254,11 @@ const cashoutCrash = async (req, res) => {
       await round.save({ transaction: t });
 
       if (Bet) {
+        const betRecord = await Bet.findOne(
+          { where: { round_id: round.id } },
+          { transaction: t }
+        );
+
         await Bet.update(
           {
             status: "lost",
@@ -1095,15 +1273,54 @@ const cashoutCrash = async (req, res) => {
           },
           { where: { round_id: round.id }, transaction: t }
         );
+
+        // ✅ Record platform profit for loss
+        if (commissionAtomic > 0n) {
+          await recordPlatformProfit({
+            transaction: t,
+            userId,
+            gameId: round.game_id,
+            betId: betRecord?.id,
+            currencyNetworkId: state.currency_network_id,
+            commissionType: "bet_loss",
+            betAmountAtomic,
+            payoutAtomic: 0n,
+            commissionAtomic,
+            commissionRateBps,
+            betAmountDisplay: state.betAmount,
+            payoutDisplay: 0,
+            commissionDisplay,
+            metadata: { gameType: "CRASH", crashPoint, finalMultiplier: crashPoint, reason: "crash_bust_commission" },
+          });
+        }
       }
 
       await t.commit();
+
+      // ✅ Emit Socket.io events
+      if (req.io) {
+        req.io.to(`game:CRASH`).emit("crash_result", {
+          userId,
+          roundId: round.id,
+          betAmount: state.betAmount,
+          crashPoint,
+          finalMultiplier: crashPoint,
+          won: false,
+          commission: commissionDisplay,
+          timestamp: new Date(),
+        });
+
+        req.io.to(`user:${userId}`).emit("balance_updated", {
+          change: -Number(state.betAmount) - Number(commissionDisplay),
+        });
+      }
 
       return res.status(400).json({
         error: "Round already crashed",
         data: {
           roundId: round.id,
           crashPoint,
+          commission: commissionDisplay,
         },
       });
     }
@@ -1169,6 +1386,24 @@ const cashoutCrash = async (req, res) => {
     });
 
     await t.commit();
+
+    // ✅ Emit Socket.io events
+    if (req.io) {
+      req.io.to(`game:CRASH`).emit("crash_result", {
+        userId,
+        roundId: round.id,
+        betAmount: state.betAmount,
+        cashoutAt: liveMultiplier,
+        payout: payoutDisplay,
+        won: true,
+        timestamp: new Date(),
+      });
+
+      req.io.to(`user:${userId}`).emit("balance_updated", {
+        newBalance: atomicToDisplay(newBalanceAtomic.toString(), decimals),
+        change: Number(payoutDisplay) - Number(state.betAmount),
+      });
+    }
 
     return res.status(200).json({
       message: "Crash cashed out",

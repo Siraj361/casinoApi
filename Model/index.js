@@ -57,6 +57,7 @@ db.vipTier = require('./VipModel/VipTierModel.js')(sequelize, DataTypes);
 db.userVip = require('./VipModel/UserVipModel.js')(sequelize, DataTypes);
 
 db.appSetting = require('./SettingsModel/AppSettingModel.js')(sequelize, DataTypes);
+db.platformProfit = require('./SettingsModel/PlatformProfitModel.js')(sequelize, DataTypes);
 db.adminAuditLog = require('./AdminModel/AdminAuditLogModel.js')(sequelize, DataTypes);
 db.language = require('./LanguageModel/LanguageModel.js')(sequelize, DataTypes);
 
@@ -155,6 +156,16 @@ db.userVip.belongsTo(db.user, { foreignKey: 'user_id', as: 'user' });
 // Admin audit
 db.user.hasMany(db.adminAuditLog, { foreignKey: 'admin_user_id' });
 db.adminAuditLog.belongsTo(db.user, { foreignKey: 'admin_user_id', as: 'admin' });
+
+// Platform Profit (Commission tracking)
+db.user.hasMany(db.platformProfit, { foreignKey: 'user_id' });
+db.platformProfit.belongsTo(db.user, { foreignKey: 'user_id', as: 'user' });
+db.game.hasMany(db.platformProfit, { foreignKey: 'game_id' });
+db.platformProfit.belongsTo(db.game, { foreignKey: 'game_id', as: 'game' });
+db.bet.hasMany(db.platformProfit, { foreignKey: 'bet_id' });
+db.platformProfit.belongsTo(db.bet, { foreignKey: 'bet_id', as: 'bet' });
+db.currencyNetwork.hasMany(db.platformProfit, { foreignKey: 'currency_network_id' });
+db.platformProfit.belongsTo(db.currencyNetwork, { foreignKey: 'currency_network_id', as: 'currencyNetwork' });
 
 
 db.sequelize.sync({ force: false })
