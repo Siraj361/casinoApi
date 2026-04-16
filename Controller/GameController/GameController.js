@@ -746,9 +746,18 @@ const revealMinesTile = async (req, res) => {
 
     const isMine = state.mineIndexes.includes(tileIndex);
 
+    const wallet = await findWallet(userId, state.currency_network_id, t, true);
+    if (!wallet) {
+      await t.rollback();
+      return res.status(404).json({ error: "Wallet not found" });
+    }
+
+    const decimals = getWalletDecimals(wallet);
+
     if (isMine) {
       state.exploded = true;
       state.hitTile = tileIndex;
+      state.revealed.push(tileIndex);
 
       // ✅ Calculate 1% commission on loss (mine hit)
       const betAmountAtomic = BigInt(amountToAtomic(state.betAmount, decimals));
