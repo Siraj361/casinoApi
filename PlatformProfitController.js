@@ -2,7 +2,7 @@
 
 // File: Controller/AdminController/PlatformProfitController.js
 
-const db = require("../../Model/index.js");
+const db = require("./Model/index.js");
 const Joi = require("joi");
 const { Op } = require("sequelize");
 
@@ -75,15 +75,13 @@ const getTotalProfits = async (req, res) => {
     if (value.commission_type) where.commission_type = value.commission_type;
     if (value.currency_network_id) where.currency_network_id = value.currency_network_id;
 
-    const [totalRecords, totalCommissionAtomic, avgCommissionAtomic] =
-      await Promise.all([
-        PlatformProfit.count({ where }),
-        PlatformProfit.sum("commission_atomic", { where }),
-        PlatformProfit.avg("commission_atomic", { where }),
-      ]);
+    const [totalRecords, totalCommissionAtomic] = await Promise.all([
+      PlatformProfit.count({ where }),
+      PlatformProfit.sum("commission_atomic", { where }),
+    ]);
 
     const totalCommission = toSafeNumber(totalCommissionAtomic);
-    const avgCommission = toSafeNumber(avgCommissionAtomic);
+    const avgCommission = totalRecords > 0 ? totalCommission / totalRecords : 0;
 
     return res.status(200).json({
       message: "Platform profits fetched",

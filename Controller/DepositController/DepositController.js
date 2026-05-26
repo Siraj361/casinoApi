@@ -141,7 +141,77 @@ const createCryptoDeposit = async (req, res) => {
   }
 };
 
+
+
+// Admin: confirm a pending deposit and credit wallet with 1% fee deducted
+const confirmDeposit = async (req, res) => {
+  const t = await db.sequelize.transaction();
+  try {
+    const depositId = parseInt(req.params.id, 10);
+    if (!depositId) {
+      await t.rollback();
+      return res.status(400).json({ error: "Invalid deposit id" });
+    }
+
+    const depositRow = await Deposit.findByPk(depositId, { transaction: t });
+    if (!depositRow) {
+      await t.rollback();
+      return res.status(404).json({ error: "Deposit not found" });
+    }
+
+    if ((depositRow.status || "").toLowerCase() !== "pending") {
+      await t.rollback();
+      return res.status(400).json({ error: `Deposit already processed: ${depositRow.status}` });
+    }
+
+    const Wallet = db.wallet;
+    const PlatformProfit = db.platformProfit;
+
+    const amountAtomic = BigInt(depositRow.amount_atomic || "0");
+    const feeAtomic = amountAtomic / 100n;
+    const netAtomic = amountAtomic - feeAtomic;
+
+    const [wallet] = await Wallet.findOrCreate({
+      where: { user_id: depositRow.user_id, currency_network_id: depositRow.currency_network_id },
+      defaults: { balance_atomic: "0" },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    const newBalance = BigInt(wallet.balance_atomic || "0") + netAtomic;
+    await wallet.update({ balance_atomic: newBalance.toString() }, { transaction: t });
+
+    try {
+      await PlatformProfit.create({
+        user_id: depositRow.user_id,
+        currency_network_id: depositRow.currency_network_id,
+        commission_type: "deposit_fee",
+        bet_amount_atomic: amountAtomic.toString(),
+        payout_atomic: "0",
+        commission_atomic: feeAtomic.toString(),
+        commission_rate_bps: 100,
+        status: "recorded",
+        metadata_json: { source: "crypto_deposit", deposit_id: depositRow.id },
+        created_at: new Date(),
+        updated_at: new Date(),
+      }, { transaction: t });
+    } catch (pfErr) {
+      console.warn("PlatformProfit record skipped:", pfErr?.message || pfErr);
+    }
+
+    await depositRow.update({ status: "confirmed", updated_at: new Date() }, { transaction: t });
+
+    await t.commit();
+    return res.status(200).json({ message: "Deposit confirmed and wallet credited" });
+  } catch (err) {
+    if (t) await t.rollback();
+    console.error("confirmDeposit Error:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
 module.exports = {
   listMyDeposits,
   createCryptoDeposit,
+  confirmDeposit,
 };

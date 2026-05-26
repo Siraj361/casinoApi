@@ -2,6 +2,7 @@ const db = require("../../Model/index.js");
 const DepositRequest = db.depositRequest;
 const CurrencyNetwork = db.currencyNetwork;
 const Wallet =db.wallet;
+const PlatformProfit = db.platformProfit;
 const User = db.user;
 
 const sequelize = db.sequelize;
@@ -87,7 +88,7 @@ const approveDepositRequest = async (req, res) => {
       return res.status(400).json({ error: `Request already processed: ${request.status}` });
     }
 
-    // 1. User ka wallet balance update karein
+    // 1. User ka wallet balance update karein (1% platform fee deducted)
     const [wallet] = await Wallet.findOrCreate({
       where: { user_id: request.user_id, currency_network_id: request.currency_network_id },
       defaults: { balance_atomic: "0" },
@@ -95,9 +96,36 @@ const approveDepositRequest = async (req, res) => {
       lock: t.LOCK.UPDATE 
     });
 
-    const newBalance = BigInt(wallet.balance_atomic || "0") + BigInt(request.claimed_amount_atomic || "0");
+    const amountAtomic = BigInt(request.claimed_amount_atomic || "0");
+    // 1% fee -> integer division
+    const feeAtomic = amountAtomic / 100n;
+    const netAtomic = amountAtomic - feeAtomic;
+
+    const newBalance = BigInt(wallet.balance_atomic || "0") + netAtomic;
 
     await wallet.update({ balance_atomic: newBalance.toString() }, { transaction: t });
+
+    // 1.a Record platform fee in platform_profits table
+    try {
+      await PlatformProfit.create({
+        user_id: request.user_id,
+        currency_network_id: request.currency_network_id,
+        commission_type: "deposit_fee",
+        bet_amount_atomic: amountAtomic.toString(),
+        payout_atomic: "0",
+        commission_atomic: feeAtomic.toString(),
+        bet_amount: null,
+        payout: null,
+        commission: null,
+        commission_rate_bps: 100,
+        status: "recorded",
+        metadata_json: { source: "deposit_request", request_id: request.id },
+        created_at: new Date(),
+        updated_at: new Date(),
+      }, { transaction: t });
+    } catch (ppErr) {
+      console.warn("PlatformProfit record skipped:", ppErr?.message || ppErr);
+    }
 
     // 2. Request status update karein
     await request.update({

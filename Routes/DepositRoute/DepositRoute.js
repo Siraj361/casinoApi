@@ -5,5 +5,6 @@ const DepositController = require("../../Controller/DepositController/DepositCon
 
 router.get("/my", VerifyJWTtoken, DepositController.listMyDeposits);
 router.post("/crypto", VerifyJWTtoken, DepositController.createCryptoDeposit);
+router.put("/confirm/:id", VerifyJWTtoken, require("../../Middleware/is_admin.js"), DepositController.confirmDeposit);
 
 module.exports = router;

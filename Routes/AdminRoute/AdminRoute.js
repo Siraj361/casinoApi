@@ -2,8 +2,7 @@
 const router = require("express").Router();
 const VerifyJWTtoken = require("../../Middleware/verify_jwt_token.js");
 const isAdmin = require("../../Middleware/is_admin.js");
-const AdminController = require("../../Controller/AdminController/AdminController.js");
-
+const AdminController = require("../../Controller/AdminController/AdminController.js");const PlatformProfitController = require("../../PlatformProfitController.js");
 router.get("/deposit-requests", VerifyJWTtoken, isAdmin, AdminController.listDepositRequests);
 
 router.get("/withdrawals", VerifyJWTtoken, isAdmin, AdminController.listWithdrawals);
@@ -20,5 +19,11 @@ router.get("/analytics-reports", VerifyJWTtoken, isAdmin, AdminController.getAna
 router.get("/recent-activity", VerifyJWTtoken, isAdmin, AdminController.getRecentActivity);
 router.get("/main-account-overview" , VerifyJWTtoken, isAdmin, AdminController.getMainAccountOverview);
 
+router.get(
+  "/profits/total",
+  VerifyJWTtoken,
+  isAdmin,
+  PlatformProfitController.getTotalProfits
+);
 
 module.exports = router;
